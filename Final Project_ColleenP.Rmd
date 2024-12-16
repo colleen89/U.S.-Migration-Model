@@ -1,0 +1,201 @@
+---
+title: "DA330 - Final Project Notebook"
+author: "Colleen Price"
+format: html
+editor: visual
+---
+
+**Project Overview**
+
+For this project my task was to pick one or more datasets on the subject of my choice, state a hypothesis to prove and to build a predictive model. I chose to look at U.S. housing cost datasets. I found one dataset that I was able to build a model on (listed below) but the second dataset I tried to use, I was unfortunately unable to build a model out of.
+
+**Problem Statement**
+
+I wanted to look at housing costs with the knowledge that prices have been skyrocketing continuously for years and also that there have been certain migration patterns across the country partly due to costs as well as job availability and the rise of covid infection rates after 2020.
+
+**Hypothesis**
+
+Based on increasing housing costs in U.S. metro areas, I hypothesize that people will start moving from metro areas to non-metro/smaller metro areas in the coming years.
+
+**Dataset**
+
+U.S. Cost of Living dataset found on Kaggle (author: username Asaniczka, from 2023, <https://www.kaggle.com/datasets/asaniczka/us-cost-of-living-dataset-3171-counties/data>)
+
+**Initial Exploration (Max/Min housing cost by location, Max/Min taxes by location)**
+
+```{r}
+library(tidyverse) 
+library(readxl) 
+library(mlr) 
+library(zoo) 
+library(mlbench)
+
+cost1 <- read_xlsx(path = "USCostofLiving.xlsx")
+
+summary(cost1)
+
+max(cost1$HousingCost)
+
+cost1housing <- cost1 %>% select(AreaName, HousingCost) %>% filter(HousingCost == 61735.59)
+
+glimpse(cost1housing)
+
+min(cost1$HousingCost)
+
+cost1housing2 <- cost1 %>% select(AreaName, HousingCost) %>% filter(HousingCost == 4209.31)
+
+glimpse(cost1housing2)
+
+clarksville <- cost1 %>% select(AreaName, Metro) %>% filter(AreaName == "Clarksville, TN-KY MSA")
+
+glimpse(clarksville)
+
+max(cost1$Taxes)
+
+maxtaxes <- cost1 %>% select(AreaName, Taxes) %>% filter(Taxes == 47753.39)
+
+glimpse(maxtaxes)
+
+min(cost1$Taxes)
+
+mintaxes <- cost1 %>% select(AreaName, Taxes) %>% filter(Taxes == 1027.8)
+
+glimpse(mintaxes)
+
+starr <- cost1 %>% select(AreaName, Metro) %>% filter(AreaName == "Starr County, TX")
+
+glimpse(starr)
+```
+
+**Graphs**
+
+```{r}
+#us cost of living: y axis: housing cost, x axis: metro +jitter; +alpha; +linear trend no se
+cost1 %>% ggplot(mapping = aes(x = Metro, y = HousingCost)) + geom_jitter(alpha = 0.5) + geom_smooth(method = "lm", se = FALSE)
+
+#us cost of living: y axis: taxes, x axis: metro +jitter; +alpha; +linear trend no se 
+cost1 %>% ggplot(mapping = aes(x = Metro, y = Taxes)) + geom_jitter(alpha = 0.5) + geom_smooth(method = "lm", se = FALSE)
+
+#us cost of living: y axis: median family income, x axis: metro +jitter; +alpha; +linear trend no se 
+cost1 %>% ggplot(mapping = aes(x = Metro, y = MedianFamilyIncome)) + geom_jitter(alpha = 0.5) + geom_smooth(method = "lm", se = FALSE)
+```
+
+**Housing Cost Mean, Median, MFV, Max and Min + Graphs**
+
+```{r}
+
+install.packages("modeest")
+library(modeest)
+
+median(cost1$HousingCost)
+
+mfv(cost1$HousingCost)
+
+mean(cost1$HousingCost)
+
+min(cost1$HousingCost)
+
+max(cost1$HousingCost)
+
+cost1 %>% ggplot(aes(x = HousingCost)) + geom_histogram()
+
+cost1 %>% ggplot(aes(x = MedianFamilyIncome)) + geom_histogram()
+
+cost1 %>% ggplot(aes(x=MedianFamilyIncome)) + geom_density(fill= "red") + theme_classic() + labs(title="US Cost of Living: Housing Cost vs Median Family Income", subtitle=, x="Median Family Income", y="Housing Cost")
+
+cost1 %>% ggplot(aes(x=MedianFamilyIncome, y=HousingCost, fill=Metro)) + geom_violin() + theme_light() + labs(title="US Cost of Living: Housing Cost vs Median Family Income by Metro/Non-Metro", subtitle="Violin plot", y="Housing Cost")
+```
+
+**Random Forest Model**
+
+```{r}
+
+cost2 <- data.frame(cost1$Metro, cost1$AreaName, cost1$HousingCost, cost1$TransportationCost, cost1$Taxes, cost1$TotalCost, cost1$MedianFamilyIncome)
+
+cost2 <- mutate_if(cost2, is.logical, as.factor)
+
+col_names <- names(cost2) cost2 <- cost2 %>% mutate(across(all_of(col_names), as.factor)) str(cost2)
+
+costTib <- as_tibble(cost2) costTib
+
+costTask <- makeClassifTask(data = cost2, target = "cost1.Metro") tree <- makeLearner("classif.rpart")
+
+getParamSet(tree) treeParamSpace <- makeParamSet( makeIntegerParam("minsplit", lower = 5, upper = 20), makeIntegerParam("minbucket", lower = 3, upper = 10), makeNumericParam("cp", lower = 0.01, upper = 0.1), makeIntegerParam("maxdepth", lower = 3, upper = 10))
+
+randSearch <- makeTuneControlRandom(maxit = 200) cvForTuning <- makeResampleDesc("CV", iters = 5)
+
+library(parallel) 
+library(parallelMap)
+
+parallelStartSocket(cpus = detectCores())
+
+tunedTreePars <- tuneParams(tree, task = costTask, resampling = cvForTuning, par.set = treeParamSpace, control = randSearch) parallelStop() tunedTreePars
+
+tunedTree <- setHyperPars(tree, par.vals = tunedTreePars$x) tunedTreeModel <- train(tunedTree, costTask)
+
+install.packages("rpart.plot") 
+library(rpart.plot)
+
+treeModelData <- getLearnerModel(tunedTreeModel) rpart.plot(treeModelData, roundint = FALSE, box.palette = "BuBn", type = 5)
+
+printcp(treeModelData, digits = 3)
+
+outer <- makeResampleDesc("CV", iters = 5) treeWrapper <- makeTuneWrapper("classif.rpart", resampling = cvForTuning, par.set = treeParamSpace, control = randSearch)
+
+parallelStartSocket(cpus = detectCores()) cvWithTuning <- resample(treeWrapper, costTask, resampling = outer) parallelStop()
+
+cvWithTuning
+```
+
+**Logistic Regression Model - Training set**
+
+```{r}
+
+cost1$Metro <- as.numeric(cost1$Metro)
+
+model <- glm(Metro ~ HousingCost + FoodCost + TransportationCost + HealthcareCost + OtherNecessitiesCost + ChildcareCost + Taxes + TotalCost + MedianFamilyIncome, data = cost1, family = binomial)
+
+summary(model)
+
+model2 <- glm(Metro ~ HousingCost + FoodCost + TransportationCost + HealthcareCost + ChildcareCost + Taxes + TotalCost + MedianFamilyIncome, data = cost1, family = binomial)
+
+summary(model2)
+```
+
+**Testing set + graphs**
+
+```{r}
+
+model3 <- glm(Metro ~ MedianFamilyIncome, data = cost1, family = binomial)
+
+summary(model3)
+
+cost1 <- cost1 %>% mutate(score = predict(model3, data = cost1), resids = Metro - score, predicted.MedianFamilyIncome = exp(score))
+
+cost1 %>% select(MedianFamilyIncome:predicted.MedianFamilyIncome) %>% head()
+
+plot.resids <- function(model3){
+
+p1 <- model3 %>% ggplot(aes(resids, ..density..)) + geom_histogram(bins = 10, alpha = 0.3, color = 'blue') + geom_density(size = 1) + labs(title="Histogram and density function \n for residuals", x="Residual value")
+
+p2 <- model3 %>% ggplot(aes(sample = resids)) + geom_qq() + labs(title="Quantile-quantile Normal plot \n of residuals")
+
+p1 %>% print() 
+p2 %>% print()
+
+}
+
+cost1 %>% plot.resids()
+
+scatter.resids <- function(model3){
+
+model3 %>% ggplot(aes(score, resids)) + geom_point(size = 2) + geom_smooth(size = 1, color = 'red', method="loess") + labs(title="Residuals vs fitted values", x="Fitted values", y="Residuals") }
+
+cost1 %>% scatter.resids()
+```
+
+**Conclusion**
+
+From my random forest model, unfortunately I was unsure how to build it in a way that would be a good fit so I ended up with all the 'AreaName' variables sorted into the binary 'Metro' variable. This isn't what I was expecting nor what I wanted for the model so I tried something different with my logistic regression model. With my logistic regression training set, I wanted to see the effect of the 'Metro' variable on the other variables. I could see that most of the p-values were very large, especially the 'OtherNecessitiesCost' variable. Next I removed that variable. When I removed this variable, I could see that the 'MedianFamilyIncome' variable still had a very small p-value, but the other p-values were big, so I could see that they are insignificant factors in this model.
+
+So I built my final testing set with the 'Metro' variable dependent on the 'MedianFamilyIncome' variable. This gave me the same small p-value for 'MedianFamilyIncome'. So I can see that the median family income is very significant in whether a family buys a house in a metro area vs a non-metro area. With my residual scatterplot, I can see that this model is well-fit. I wasn't able to prove my hypothesis with this project and I would conclude that more research is required.
